@@ -36,7 +36,7 @@ options:
     default: null
   key:
     description:
-      - The SSH public host key, as a string (required if state=present, optional when state=absent, in which case all keys for the host are removed)
+      - The SSH public host key, as a string (if state=present and key is unspecified, it will be fetched using ssh-keyscan. optional when state=absent, in which case all keys for the host are removed)
     required: false
     default: null
   path:
@@ -60,6 +60,14 @@ EXAMPLES = '''
   known_hosts: path='/etc/ssh/ssh_known_hosts'
                host='foo.com.invalid'
                key="{{ lookup('file', 'pubkeys/foo.com.invalid') }}"
+
+# Example using ssh-keyscan to fetch the key of a provisioned host and add to
+# ansible master known hosts
+- name: update known_hosts with provisioned host's key
+  local_action: known_hosts
+  args:
+    path: '/etc/ssh/ssh_known_hosts'
+    host: '{{ provisioned_host_ip }}
 '''
 
 # Makes sure public host keys are present or absent in the given known_hosts
@@ -91,13 +99,18 @@ def enforce_state(module, params):
     state = params.get("state")
     #Find the ssh-keygen binary
     sshkeygen = module.get_bin_path("ssh-keygen",True)
+    sshkeyscan = module.get_bin_path("ssh-keyscan",True)
 
     #trailing newline in files gets lost, so re-add if necessary
+    if key is None and state != "absent":
+        rc,stdout,stderr=module.run_command([sshkeyscan,host], check_rc=True)
+        if stdout=='': #host not found
+            module.fail_json(msg="Unable to ssh-keyscan host {}".format(host))
+        else:
+            key = stdout
+
     if key is not None and key[-1]!='\n':
         key+='\n'
-
-    if key is None and state != "absent":
-        module.fail_json(msg="No key specified when adding a host")
 
     sanity_check(module,host,key,sshkeygen)
 
